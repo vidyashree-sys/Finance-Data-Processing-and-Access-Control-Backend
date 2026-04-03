@@ -6,18 +6,31 @@ const createTransaction = async (req, res) => {
   try {
     const { amount, type, category, description, date } = req.body;
 
+    // 1. Manual Validation (Requirement #5)
+    if (!amount || isNaN(amount) || amount <= 0) {
+      return res.status(400).json({ message: 'Please provide a valid positive amount' });
+    }
+    if (!['INCOME', 'EXPENSE'].includes(type)) {
+      return res.status(400).json({ message: 'Type must be either INCOME or EXPENSE' });
+    }
+    if (!category || category.trim() === "") {
+      return res.status(400).json({ message: 'Category is required' });
+    }
+
     const transaction = await Transaction.create({
-      amount, // Reminder: Input should be in cents (1000 = $10.00)
+      amount,
       type,
       category,
       description,
-      date,
-      creator: req.user._id // Taken from the protect middleware
+      date: date || Date.now(),
+      creator: req.user._id
     });
 
     res.status(201).json(transaction);
   } catch (error) {
-    res.status(400).json({ message: 'Invalid transaction data', error: error.message });
+    // This passes the error to our Global Error Handler
+    res.status(500);
+    throw new Error('Server Error: Could not create transaction');
   }
 };
 
