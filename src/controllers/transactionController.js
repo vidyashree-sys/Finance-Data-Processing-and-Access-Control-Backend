@@ -38,20 +38,54 @@ const createTransaction = async (req, res) => {
 // @route   GET /api/transactions
 const getTransactions = async (req, res) => {
   try {
-    const { type, category, startDate, endDate } = req.query;
-    let query = {};
+    // 1. Extract values from the URL (Query Parameters)
+    // Example: /api/transactions?page=1&limit=5&search=Lunch
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+    const { search, type, category } = req.query;
 
-    // Filtering Logic (Requirement #2)
-    if (type) query.type = type;
-    if (category) query.category = category;
-    if (startDate && endDate) {
-      query.date = { $gte: new Date(startDate), $lte: new Date(endDate) };
+    // 2. Build the Query (The "Filter")
+    // We only want records where isDeleted is NOT true
+    let query = { isDeleted: { $ne: true } };
+
+    // Filter by Type (INCOME/EXPENSE)
+    if (type) {
+      query.type = type;
     }
 
-    const transactions = await Transaction.find(query).sort({ date: -1 });
-    res.json(transactions);
+    // Filter by Category
+    if (category) {
+      query.category = category;
+    }
+
+    // SEARCH LOGIC: Look inside Description OR Category
+    if (search) {
+      query.$or = [
+        { description: { $regex: search, $options: 'i' } },
+        { category: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    // 3. Get Data from MongoDB
+    const transactions = await Transaction.find(query)
+      .sort({ date: -1 }) // Show newest records first
+      .limit(limit)
+      .skip(skip);
+
+    // 4. Get Total Count (Needed for frontend pagination buttons)
+    const totalRecords = await Transaction.countDocuments(query);
+
+    // 5. Send Response
+    res.json({
+      transactions,
+      currentPage: page,
+      totalPages: Math.ceil(totalRecords / limit),
+      totalRecords
+    });
+
   } catch (error) {
-    res.status(500).json({ message: 'Server Error' });
+    res.status(500).json({ message: 'Error fetching transactions', error: error.message });
   }
 };
 
@@ -79,15 +113,20 @@ const updateTransaction = async (req, res) => {
 const deleteTransaction = async (req, res) => {
   try {
     const transaction = await Transaction.findById(req.params.id);
-    if (!transaction) return res.status(404).json({ message: 'Transaction not found' });
+    
+    if (!transaction) {
+      return res.status(404).json({ message: 'Transaction not found' });
+    }
 
-    await transaction.deleteOne();
-    res.json({ message: 'Transaction removed' });
+    // Change the flag instead of removing the document
+    transaction.isDeleted = true;
+    await transaction.save();
+
+    res.json({ message: 'Transaction moved to trash (Soft Deleted)' });
   } catch (error) {
-    res.status(500).json({ message: 'Delete failed' });
+    res.status(500).json({ message: 'Error during soft delete' });
   }
 };
-
 // @desc    Get Dashboard Summary
 // @route   GET /api/transactions/summary
 const getSummary = async (req, res) => {
